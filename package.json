@@ -1,0 +1,45 @@
+{
+  "name": "krak-scribe",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3200",
+    "build": "next build",
+    "start": "next start -p 3200",
+    "lint": "next lint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "next": "^15.3.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "drizzle-orm": "^0.44.2",
+    "better-sqlite3": "^11.9.1",
+    "bcryptjs": "^3.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^11.1.0",
+    "groq-sdk": "^0.15.0",
+    "formidable": "^3.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.5",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/uuid": "^10.0.0",
+    "@types/formidable": "^3.4.5",
+    "typescript": "^5.8.3",
+    "tailwindcss": "^4.1.7",
+    "@tailwindcss/postcss": "^4.1.7",
+    "postcss": "^8.5.3",
+    "drizzle-kit": "^0.31.1",
+    "eslint": "^9.27.0",
+    "eslint-config-next": "^15.3.3",
+    "@eslint/eslintrc": "^3.3.1"
+  }
+}
