@@ -4,6 +4,9 @@ import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
+/**
+ * GET /api/templates/[id] — Get a single template.
+ */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -12,7 +15,10 @@ export async function GET(
     const { id } = await params;
     const userId = getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Provide a valid Bearer token." },
+        { status: 401 }
+      );
     }
 
     const [template] = await db
@@ -28,7 +34,17 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ template });
+    return NextResponse.json({
+      id: template.id,
+      name: template.name,
+      description: template.description,
+      systemPrompt: template.systemPrompt,
+      userPromptTemplate: template.userPromptTemplate,
+      model: template.model,
+      isDefault: template.isDefault,
+      createdAt: template.createdAt,
+      updatedAt: template.updatedAt,
+    });
   } catch (error) {
     console.error("Get template error:", error);
     return NextResponse.json(
@@ -38,6 +54,9 @@ export async function GET(
   }
 }
 
+/**
+ * PUT /api/templates/[id] — Update an existing template.
+ */
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -46,12 +65,13 @@ export async function PUT(
     const { id } = await params;
     const userId = getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Provide a valid Bearer token." },
+        { status: 401 }
+      );
     }
 
-    const body = await request.json();
-    const { name, description, promptTemplate, isDefault } = body;
-
+    // Verify ownership
     const [existing] = await db
       .select()
       .from(templates)
@@ -65,27 +85,94 @@ export async function PUT(
       );
     }
 
-    // If setting as default, unset others first
-    if (isDefault) {
-      await db
-        .update(templates)
-        .set({ isDefault: false, updatedAt: new Date().toISOString() })
-        .where(eq(templates.userId, userId));
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Malformed JSON body" },
+        { status: 400 }
+      );
+    }
+
+    const { name, description, systemPrompt, userPromptTemplate, model } =
+      (body ?? {}) as Record<string, unknown>;
+
+    // Build update payload — only include provided fields
+    const updates: Record<string, unknown> = {
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim().length === 0) {
+        return NextResponse.json(
+          { error: "name must be a non-empty string" },
+          { status: 400 }
+        );
+      }
+      updates.name = name.trim();
+    }
+
+    if (description !== undefined) {
+      if (description !== null && typeof description !== "string") {
+        return NextResponse.json(
+          { error: "description must be a string when provided" },
+          { status: 400 }
+        );
+      }
+      updates.description = typeof description === "string" ? description.trim() || null : null;
+    }
+
+    if (systemPrompt !== undefined) {
+      if (typeof systemPrompt !== "string" || systemPrompt.trim().length === 0) {
+        return NextResponse.json(
+          { error: "systemPrompt must be a non-empty string" },
+          { status: 400 }
+        );
+      }
+      updates.systemPrompt = systemPrompt.trim();
+    }
+
+    if (userPromptTemplate !== undefined) {
+      if (
+        typeof userPromptTemplate !== "string" ||
+        userPromptTemplate.trim().length === 0
+      ) {
+        return NextResponse.json(
+          { error: "userPromptTemplate must be a non-empty string" },
+          { status: 400 }
+        );
+      }
+      updates.userPromptTemplate = userPromptTemplate.trim();
+    }
+
+    if (model !== undefined) {
+      if (model !== null && typeof model !== "string") {
+        return NextResponse.json(
+          { error: "model must be a string when provided" },
+          { status: 400 }
+        );
+      }
+      updates.model = typeof model === "string" ? model.trim() || "x-ai/grok-4.1-fast" : "x-ai/grok-4.1-fast";
     }
 
     const [updated] = await db
       .update(templates)
-      .set({
-        ...(name !== undefined && { name }),
-        ...(description !== undefined && { description }),
-        ...(promptTemplate !== undefined && { promptTemplate }),
-        ...(isDefault !== undefined && { isDefault }),
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(templates.id, id))
+      .set(updates)
+      .where(and(eq(templates.id, id), eq(templates.userId, userId)))
       .returning();
 
-    return NextResponse.json({ template: updated });
+    return NextResponse.json({
+      id: updated.id,
+      name: updated.name,
+      description: updated.description,
+      systemPrompt: updated.systemPrompt,
+      userPromptTemplate: updated.userPromptTemplate,
+      model: updated.model,
+      isDefault: updated.isDefault,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    });
   } catch (error) {
     console.error("Update template error:", error);
     return NextResponse.json(
@@ -95,6 +182,9 @@ export async function PUT(
   }
 }
 
+/**
+ * DELETE /api/templates/[id] — Delete a template.
+ */
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -103,9 +193,13 @@ export async function DELETE(
     const { id } = await params;
     const userId = getUserIdFromRequest(request);
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized. Provide a valid Bearer token." },
+        { status: 401 }
+      );
     }
 
+    // Verify ownership
     const [existing] = await db
       .select()
       .from(templates)
@@ -119,10 +213,24 @@ export async function DELETE(
       );
     }
 
-    await db.delete(templates).where(eq(templates.id, id));
+    await db
+      .delete(templates)
+      .where(and(eq(templates.id, id), eq(templates.userId, userId)));
 
-    return NextResponse.json({ message: "Template deleted" });
+    return NextResponse.json({ deleted: true, id });
   } catch (error) {
+    if (
+      error instanceof Error &&
+      /FOREIGN KEY constraint failed/i.test(error.message)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Template is in use by processed outputs and cannot be deleted.",
+        },
+        { status: 409 }
+      );
+    }
     console.error("Delete template error:", error);
     return NextResponse.json(
       { error: "Internal server error" },

@@ -49,7 +49,9 @@ export const templates = sqliteTable("templates", {
     .references(() => users.id),
   name: text("name").notNull(),
   description: text("description"),
-  promptTemplate: text("prompt_template").notNull(),
+  systemPrompt: text("system_prompt").notNull(),
+  userPromptTemplate: text("user_prompt_template").notNull(),
+  model: text("model").notNull().default("x-ai/grok-4.1-fast"),
   isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at")
     .notNull()
