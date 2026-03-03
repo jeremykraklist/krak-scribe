@@ -99,9 +99,19 @@ export async function PUT(
       (body ?? {}) as Record<string, unknown>;
 
     // Build update payload — only include provided fields
-    const updates: Record<string, unknown> = {
-      updatedAt: new Date().toISOString(),
-    };
+    const updates: Record<string, unknown> = {};
+
+    // Check if any updatable field was actually provided
+    const updatableKeys = ["name", "description", "systemPrompt", "userPromptTemplate", "model"];
+    const hasUpdates = updatableKeys.some((k) => (body as Record<string, unknown>)[k] !== undefined);
+    if (!hasUpdates) {
+      return NextResponse.json(
+        { error: "No updatable fields provided. Accepted: name, description, systemPrompt, userPromptTemplate, model" },
+        { status: 400 }
+      );
+    }
+
+    updates.updatedAt = new Date().toISOString();
 
     if (name !== undefined) {
       if (typeof name !== "string" || name.trim().length === 0) {
