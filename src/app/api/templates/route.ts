@@ -27,7 +27,8 @@ export async function GET(request: NextRequest) {
       .select()
       .from(templates)
       .where(eq(templates.userId, userId))
-      .orderBy(desc(templates.isDefault), desc(templates.createdAt));
+      .orderBy(desc(templates.isDefault), desc(templates.createdAt))
+      .all();
 
     return NextResponse.json({
       templates: userTemplates.map((t) => ({
