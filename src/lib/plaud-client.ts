@@ -72,7 +72,42 @@ export async function listRecordings(): Promise<PlaudFile[]> {
 }
 
 /**
+ * Get a presigned S3 URL for a recording's audio file.
+ * Uses /file/temp-url/{id}?is_opus=1 which returns both MP3 and Opus URLs.
+ */
+async function getTempUrl(fileId: string): Promise<string> {
+  const token = getToken();
+
+  const url = `${PLAUD_API_BASE}/file/temp-url/${fileId}?is_opus=1`;
+
+  const response = await fetch(url, {
+    headers: { Authorization: token },
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Plaud temp-url error (${response.status}): ${await response.text()}`
+    );
+  }
+
+  const data = (await response.json()) as {
+    status: number;
+    temp_url: string;
+    temp_url_opus?: string;
+  };
+
+  if (data.status !== 0 || !data.temp_url) {
+    throw new Error(`Plaud temp-url failed: status ${data.status}`);
+  }
+
+  // Prefer MP3 URL (temp_url), fall back to opus
+  return data.temp_url;
+}
+
+/**
  * Download a recording's audio file (MP3) to disk.
+ * Uses presigned S3 URLs from /file/temp-url endpoint.
  * Returns the path where the file was saved.
  */
 export async function downloadAudio(
@@ -80,23 +115,22 @@ export async function downloadAudio(
   outputDir: string,
   filename?: string
 ): Promise<{ filePath: string; fileSize: number }> {
-  const token = getToken();
-
   // Ensure output directory exists
   if (!existsSync(outputDir)) {
     await mkdir(outputDir, { recursive: true });
   }
 
-  const url = `${PLAUD_API_BASE}/file/download/${fileId}`;
+  // Get presigned S3 URL for the actual MP3 audio
+  const audioUrl = await getTempUrl(fileId);
 
-  const response = await fetch(url, {
-    headers: { Authorization: token },
+  // Download the MP3 from S3
+  const response = await fetch(audioUrl, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
     throw new Error(
-      `Plaud download error (${response.status}): ${await response.text()}`
+      `Plaud audio download error (${response.status})`
     );
   }
 
