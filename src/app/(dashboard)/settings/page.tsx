@@ -161,9 +161,9 @@ export default function SettingsPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between bg-background border border-border rounded-lg p-3">
             <div>
-              <p className="text-sm font-medium">Groq API</p>
+              <p className="text-sm font-medium">Transcription Engine</p>
               <p className="text-muted text-xs">
-                Whisper transcription & LLM processing
+                Local whisper.cpp + OpenRouter AI processing
               </p>
             </div>
             <span className="px-2 py-1 bg-green-500/10 text-green-400 text-xs rounded-full border border-green-500/20">

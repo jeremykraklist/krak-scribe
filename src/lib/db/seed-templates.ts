@@ -160,20 +160,21 @@ Direct quotes worth remembering from the conversation.`,
 
 /**
  * Seeds default templates for a given user if none exist yet.
- * Uses a transaction to prevent race conditions on concurrent first requests.
+ * better-sqlite3 transactions must be synchronous (no async/await).
  */
-export async function seedDefaultTemplates(userId: string): Promise<void> {
-  await db.transaction(async (tx) => {
-    const existing = await tx
-      .select()
-      .from(templates)
-      .where(eq(templates.userId, userId))
-      .limit(1);
+export function seedDefaultTemplates(userId: string): void {
+  const existing = db
+    .select()
+    .from(templates)
+    .where(eq(templates.userId, userId))
+    .limit(1)
+    .all();
 
-    if (existing.length > 0) return;
+  if (existing.length > 0) return;
 
-    const now = new Date().toISOString();
-    await tx.insert(templates).values(
+  const now = new Date().toISOString();
+  db.insert(templates)
+    .values(
       DEFAULT_TEMPLATES.map((tpl) => ({
         id: uuidv4(),
         userId,
@@ -186,6 +187,6 @@ export async function seedDefaultTemplates(userId: string): Promise<void> {
         createdAt: now,
         updatedAt: now,
       }))
-    );
-  });
+    )
+    .run();
 }

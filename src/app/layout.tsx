@@ -10,7 +10,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "KrakScribe — Transcript Processing Pipeline",
   description:
-    "Upload audio from Plaud Note Pin S, transcribe via Groq Whisper, process through AI templates.",
+    "Upload audio from Plaud Note Pin S, transcribe locally via whisper.cpp, process through AI templates.",
 };
 
 export default function RootLayout({

@@ -21,9 +21,9 @@ export async function GET(request: NextRequest) {
     }
 
     // Seed defaults if user has no templates yet
-    await seedDefaultTemplates(userId);
+    seedDefaultTemplates(userId);
 
-    const userTemplates = await db
+    const userTemplates = db
       .select()
       .from(templates)
       .where(eq(templates.userId, userId))
