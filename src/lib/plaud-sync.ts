@@ -162,8 +162,14 @@ export async function listPlaudFiles(
   const data = await res.json();
   const files: PlaudFile[] = data.data_file_list || data.data || [];
 
-  // Filter out trashed files
-  return files.filter((f) => !f.is_trash);
+  // Filter out trashed files and return newest first
+  return files
+    .filter((f) => !f.is_trash)
+    .sort(
+      (a, b) =>
+        Date.parse(b.create_time || "1970-01-01T00:00:00.000Z") -
+        Date.parse(a.create_time || "1970-01-01T00:00:00.000Z")
+    );
 }
 
 /**

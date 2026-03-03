@@ -114,14 +114,16 @@ function ensureInitialized(): void {
     if (!transcriptColumns.includes("plaud_file_id")) {
       try {
         sqlite.exec("ALTER TABLE transcripts ADD COLUMN plaud_file_id TEXT");
-        sqlite.exec(
-          "CREATE INDEX IF NOT EXISTS idx_transcripts_plaud_file_id ON transcripts(plaud_file_id)"
-        );
       } catch (migrationError) {
         console.error("Transcripts plaud_file_id migration failed:", migrationError);
         throw migrationError;
       }
     }
+
+    // Always attempt index creation — self-heals if prior run added the column but crashed before indexing
+    sqlite.exec(
+      "CREATE INDEX IF NOT EXISTS idx_transcripts_plaud_file_id ON transcripts(plaud_file_id)"
+    );
 
     // Enforce Plaud file deduplication at the DB level (partial unique index)
     try {
