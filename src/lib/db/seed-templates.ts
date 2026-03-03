@@ -156,6 +156,145 @@ What to prioritize based on what was discussed.
 **Notable Quotes:**
 Direct quotes worth remembering from the conversation.`,
   },
+  {
+    name: "Detailed Transcript Analysis",
+    description:
+      "Comprehensive extraction: summary, action items, key quotes, decisions, follow-ups, content ideas, sentiment analysis, and more.",
+    systemPrompt:
+      "You are an elite analyst who extracts maximum value from conversations. Leave nothing on the table. Every insight, every nuance, every implicit and explicit piece of information should be captured and organized. Use rich markdown formatting with emojis for scannability.",
+    userPromptTemplate: `Perform a comprehensive analysis of this transcript. Extract EVERYTHING of value.
+
+**Date:** {{date}}
+**Duration:** {{duration}}
+**Speakers:** {{speakers}}
+**Topic:** {{topic}}
+
+## Transcript
+{{transcript}}
+
+---
+
+## 📊 Comprehensive Analysis
+
+### 🔍 Overview
+- **Summary** (3-5 sentences)
+- **Context & Setting** (what prompted this conversation)
+- **Overall Tone/Sentiment** (professional, casual, tense, excited, etc.)
+
+### 🎯 Key Decisions
+For each decision:
+- What was decided
+- Why (rationale/context)
+- Who championed it
+- Confidence level (definitive / tentative / exploratory)
+
+### ✅ Action Items
+| # | Task | Owner | Deadline | Priority | Status |
+|---|------|-------|----------|----------|--------|
+(Extract every commitment, promise, or "I'll do X")
+
+### 💡 Key Insights & Ideas
+- Novel ideas mentioned
+- Strategic insights
+- "Aha" moments
+- Hypotheses proposed
+
+### 📋 Follow-Up Items
+- Questions that need answering
+- Research to be done
+- People to loop in
+- Meetings to schedule
+
+### 🗣️ Notable Quotes
+Extract 5-10 direct quotes that capture the most important points, with speaker attribution.
+
+### 📈 Metrics & Numbers
+Any data points, statistics, dates, dollar amounts, or quantitative information mentioned.
+
+### ⚠️ Risks & Concerns
+- Potential problems identified
+- Disagreements or tensions
+- Resource constraints mentioned
+- Dependencies flagged
+
+### 🤝 Relationships & Dynamics
+- Power dynamics observed
+- Agreements and alignments
+- Points of friction
+- Who deferred to whom
+
+### 🎬 Content Opportunities
+- Quotable sound bites
+- Stories worth sharing
+- Lessons that could be taught
+- Topics for future deep-dives
+
+### 📝 Raw Notes
+Any details that don't fit above categories but are worth preserving.`,
+  },
+  {
+    name: "AI Agent Instructions",
+    description:
+      "Converts spoken ideas into structured, actionable prompts ready to paste into AI agents. Perfect for voice-to-agent delegation.",
+    systemPrompt: `You are an expert prompt engineer who transforms raw human speech into crystal-clear, structured instructions for AI agents. Your job is to:
+
+1. Extract the INTENT behind what the speaker is asking for
+2. Fill in implied details and reasonable defaults
+3. Structure it as a professional prompt/task spec
+4. Include acceptance criteria so the agent knows when it's done
+5. Flag any ambiguities that need clarification
+
+The output should be IMMEDIATELY usable — paste into Claude, GPT, or any AI agent and get results. No editing needed.
+
+Write in imperative/command form. Be specific. Include constraints and edge cases.`,
+    userPromptTemplate: `Listen to what I said and convert it into one or more structured AI agent instructions.
+
+**Date:** {{date}}
+**Duration:** {{duration}}
+
+## What I Said
+{{transcript}}
+
+---
+
+## 🤖 Agent Instructions
+
+For each distinct task or idea mentioned, create a structured instruction block:
+
+### Task [N]: [Descriptive Title]
+
+**Objective:** One clear sentence describing what the agent should accomplish.
+
+**Context:** Background information the agent needs to understand WHY.
+
+**Instructions:**
+1. Step-by-step breakdown
+2. Include specific details mentioned
+3. Fill in reasonable defaults for anything left ambiguous
+4. Note any constraints or preferences stated
+
+**Acceptance Criteria:**
+- [ ] Checklist of what "done" looks like
+- [ ] Specific deliverables expected
+- [ ] Quality requirements
+
+**Technical Notes:**
+- Stack/tools to use (if mentioned)
+- APIs or services referenced
+- File locations or repos mentioned
+
+**Priority:** High / Medium / Low (inferred from tone and urgency)
+
+**⚠️ Ambiguities to Resolve:**
+- List anything unclear that the agent should ask about before proceeding
+
+---
+
+**💡 Meta-Notes:**
+- Were multiple tasks mentioned? If so, suggest execution order.
+- Any dependencies between tasks?
+- Recommended agent/model for each task (if specific expertise needed).`,
+  },
 ];
 
 /**
