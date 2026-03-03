@@ -36,6 +36,15 @@ export async function GET(
       );
     }
 
+    const safeParse = (value: string | null): unknown => {
+      if (!value) return null;
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    };
+
     return NextResponse.json({
       id: transcript.id,
       originalFilename: transcript.originalFilename,
@@ -45,12 +54,8 @@ export async function GET(
       duration: transcript.duration,
       language: transcript.language,
       text: transcript.transcriptionText,
-      segments: transcript.transcriptionSegments
-        ? JSON.parse(transcript.transcriptionSegments)
-        : null,
-      speakers: transcript.speakerDiarization
-        ? JSON.parse(transcript.speakerDiarization)
-        : null,
+      segments: safeParse(transcript.transcriptionSegments),
+      speakers: safeParse(transcript.speakerDiarization),
       errorMessage: transcript.errorMessage,
       createdAt: transcript.createdAt,
       updatedAt: transcript.updatedAt,
@@ -102,13 +107,13 @@ export async function DELETE(
       .where(and(eq(transcripts.id, id), eq(transcripts.userId, userId)));
 
     // Try to remove the uploaded file
-    try {
-      const { unlinkSync, existsSync } = await import("fs");
-      if (transcript.filePath && existsSync(transcript.filePath)) {
-        unlinkSync(transcript.filePath);
+    if (transcript.filePath) {
+      try {
+        const { unlink } = await import("fs/promises");
+        await unlink(transcript.filePath);
+      } catch {
+        // Ignore file deletion errors (e.g. ENOENT)
       }
-    } catch {
-      // Ignore file deletion errors
     }
 
     return NextResponse.json({ deleted: true, id });

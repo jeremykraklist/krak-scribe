@@ -12,7 +12,7 @@ Plaud Note Pin S transcript processing pipeline. Upload audio from Plaud (or any
 Eliminates $20/mo Plaud transcription subscription.
 
 ## Architecture
-```
+```text
 Audio Upload (drag & drop / Plaud export)
     ↓
 whisper.cpp (local transcription via ffmpeg → WAV → SRT)
@@ -35,6 +35,7 @@ Dashboard UI (search, browse, export)
 - `CRUD /api/templates` — manage prompt templates
 
 ## Phases
+
 | Phase | Scope | Status |
 |-------|-------|--------|
 | Phase 1 | Upload + whisper.cpp transcribe + AI templates + dashboard | ✅ Complete |

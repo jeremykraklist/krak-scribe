@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 
 /**
  * GET /api/templates/[id] — Get a single template.
@@ -173,6 +173,15 @@ export async function PUT(
           { status: 400 }
         );
       }
+
+      // Clear other defaults for this user before setting a new one
+      if (isDefault) {
+        await db
+          .update(templates)
+          .set({ isDefault: false, updatedAt: new Date().toISOString() })
+          .where(and(eq(templates.userId, userId), ne(templates.id, id)));
+      }
+
       updates.isDefault = isDefault;
     }
 

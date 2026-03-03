@@ -91,18 +91,25 @@ export default function TranscriptDetailPage() {
 
       if (outputsRes.ok) {
         const outputsData = await outputsRes.json();
-        setOutputs(outputsData.outputs || []);
-        if (outputsData.outputs?.length > 0) {
-          setActiveOutputTab((prev) => prev ?? outputsData.outputs[0].id);
-        }
+        const fetchedOutputs: ProcessedOutput[] = outputsData.outputs || [];
+        setOutputs(fetchedOutputs);
+        setActiveOutputTab((prev) => {
+          if (fetchedOutputs.length === 0) return null;
+          return prev && fetchedOutputs.some((o) => o.id === prev)
+            ? prev
+            : fetchedOutputs[0].id;
+        });
       }
 
       if (templatesRes.ok) {
         const templatesData = await templatesRes.json();
-        setTemplates(templatesData.templates || []);
-        if (templatesData.templates?.length > 0) {
-          setSelectedTemplate((prev) => prev || templatesData.templates[0].id);
-        }
+        const fetchedTemplates: Template[] = templatesData.templates || [];
+        setTemplates(fetchedTemplates);
+        setSelectedTemplate((prev) =>
+          prev && fetchedTemplates.some((t) => t.id === prev)
+            ? prev
+            : (fetchedTemplates[0]?.id ?? "")
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
