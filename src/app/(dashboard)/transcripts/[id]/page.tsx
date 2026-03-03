@@ -92,16 +92,16 @@ export default function TranscriptDetailPage() {
       if (outputsRes.ok) {
         const outputsData = await outputsRes.json();
         setOutputs(outputsData.outputs || []);
-        if (outputsData.outputs?.length > 0 && !activeOutputTab) {
-          setActiveOutputTab(outputsData.outputs[0].id);
+        if (outputsData.outputs?.length > 0) {
+          setActiveOutputTab((prev) => prev ?? outputsData.outputs[0].id);
         }
       }
 
       if (templatesRes.ok) {
         const templatesData = await templatesRes.json();
         setTemplates(templatesData.templates || []);
-        if (templatesData.templates?.length > 0 && !selectedTemplate) {
-          setSelectedTemplate(templatesData.templates[0].id);
+        if (templatesData.templates?.length > 0) {
+          setSelectedTemplate((prev) => prev || templatesData.templates[0].id);
         }
       }
     } catch (err) {
@@ -109,7 +109,7 @@ export default function TranscriptDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, activeOutputTab, selectedTemplate]);
+  }, [id]);
 
   useEffect(() => {
     fetchData();
@@ -142,8 +142,20 @@ export default function TranscriptDetailPage() {
       }
 
       const data = await res.json();
-      setOutputs((prev) => [data.output, ...prev]);
-      setActiveOutputTab(data.output.id);
+      // API returns the output fields at the top level, not nested under "output"
+      const newOutput: ProcessedOutput = {
+        id: data.id,
+        transcriptId: data.transcriptId,
+        templateId: data.templateId,
+        templateName: data.templateName,
+        outputText: data.outputText,
+        modelUsed: data.modelUsed,
+        tokensUsed: data.tokensUsed,
+        processingTimeMs: data.processingTimeMs,
+        createdAt: data.createdAt,
+      };
+      setOutputs((prev) => [newOutput, ...prev]);
+      setActiveOutputTab(newOutput.id);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Processing failed");
     } finally {

@@ -48,3 +48,4 @@ data/uploads/*
 
 # drizzle
 /drizzle/
+.worktrees
