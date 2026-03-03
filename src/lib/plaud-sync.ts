@@ -27,6 +27,7 @@ import { v4 as uuidv4 } from "uuid";
 import { db } from "./db";
 import { transcripts, plaudSyncState } from "./db/schema";
 import { eq, and } from "drizzle-orm";
+import { encryptToken, decryptToken } from "./crypto";
 
 const PLAUD_API_BASE = "https://api.plaud.ai";
 const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
@@ -254,6 +255,55 @@ export function getSyncState(userId: string) {
 }
 
 /**
+ * Atomically claim sync lock for a user using compare-and-set.
+ * Returns true if the claim succeeded (status was NOT 'syncing' and is now 'syncing').
+ * Returns false if another sync is already in progress.
+ */
+export function claimSyncLock(userId: string): boolean {
+  const existing = getSyncState(userId);
+  const now = new Date().toISOString();
+
+  if (!existing) {
+    // No state row yet — create one in 'syncing' status
+    db.insert(plaudSyncState)
+      .values({
+        id: uuidv4(),
+        userId,
+        plaudToken: "",
+        plaudEmail: null,
+        lastSyncAt: null,
+        lastSyncFileCount: 0,
+        lastSyncError: null,
+        syncStatus: "syncing",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+    return true;
+  }
+
+  if (existing.syncStatus === "syncing") {
+    return false;
+  }
+
+  // Atomic CAS: only update if syncStatus hasn't changed to 'syncing' since our read.
+  // SQLite serializes writes, so this WHERE condition acts as a compare-and-set.
+  const result = db
+    .update(plaudSyncState)
+    .set({ syncStatus: "syncing", updatedAt: now })
+    .where(
+      and(
+        eq(plaudSyncState.userId, userId),
+        // Only claim if NOT already syncing (CAS guard)
+        eq(plaudSyncState.syncStatus, existing.syncStatus)
+      )
+    )
+    .run();
+
+  return result.changes > 0;
+}
+
+/**
  * Update sync state after a sync run.
  */
 type SyncStatusEnum = "idle" | "syncing" | "error" | "disconnected";
@@ -306,9 +356,12 @@ export function savePlaudToken(userId: string, token: string) {
     ? token
     : `Bearer ${token}`;
 
+  // Encrypt token before persisting to database
+  const encryptedToken = encryptToken(normalizedToken);
+
   if (existing) {
     db.update(plaudSyncState)
-      .set({ plaudToken: normalizedToken, updatedAt: now })
+      .set({ plaudToken: encryptedToken, updatedAt: now })
       .where(eq(plaudSyncState.userId, userId))
       .run();
   } else {
@@ -316,7 +369,7 @@ export function savePlaudToken(userId: string, token: string) {
       .values({
         id: uuidv4(),
         userId,
-        plaudToken: normalizedToken,
+        plaudToken: encryptedToken,
         plaudEmail: null,
         lastSyncAt: null,
         lastSyncFileCount: 0,
@@ -334,7 +387,9 @@ export function savePlaudToken(userId: string, token: string) {
  */
 export function getPlaudToken(userId: string): string | null {
   const state = getSyncState(userId);
-  return state?.plaudToken || null;
+  if (!state?.plaudToken) return null;
+  // Decrypt token (handles both encrypted and legacy plaintext tokens)
+  return decryptToken(state.plaudToken);
 }
 
 /**
@@ -409,8 +464,8 @@ export async function syncFromPlaud(
     return result;
   }
 
-  // Update status to syncing
-  updateSyncState(userId, { syncStatus: "syncing" });
+  // Note: Caller should use claimSyncLock() before calling syncFromPlaud()
+  // to atomically set status to "syncing" and prevent races.
 
   try {
     // 1. Verify token
@@ -458,28 +513,38 @@ export async function syncFromPlaud(
         // Download audio
         const downloaded = await downloadAudioFile(audioUrl, safeFilename);
 
-        // Create transcript record
+        // Create transcript record (handle unique constraint for idempotency)
         const transcriptId = uuidv4();
         const now = new Date().toISOString();
 
-        db.insert(transcripts)
-          .values({
-            id: transcriptId,
-            userId,
-            originalFilename: file.filename || `Plaud Recording ${file.id}`,
-            storedFilename: downloaded.storedFilename,
-            filePath: downloaded.filePath,
-            mimeType: "audio/mp4",
-            fileSize: downloaded.fileSize,
-            duration: file.duration || null,
-            status: "pending",
-            plaudFileId: file.id,
-            createdAt: file.create_time || now,
-            updatedAt: now,
-          })
-          .run();
+        try {
+          db.insert(transcripts)
+            .values({
+              id: transcriptId,
+              userId,
+              originalFilename: file.filename || `Plaud Recording ${file.id}`,
+              storedFilename: downloaded.storedFilename,
+              filePath: downloaded.filePath,
+              mimeType: "audio/mp4",
+              fileSize: downloaded.fileSize,
+              duration: file.duration || null,
+              status: "pending",
+              plaudFileId: file.id,
+              createdAt: file.create_time || now,
+              updatedAt: now,
+            })
+            .run();
 
-        result.filesDownloaded++;
+          result.filesDownloaded++;
+        } catch (insertErr: unknown) {
+          // If unique constraint violation, treat as already-synced (idempotent)
+          const errMsg = insertErr instanceof Error ? insertErr.message : "";
+          if (errMsg.includes("UNIQUE constraint failed")) {
+            result.filesSkipped++;
+          } else {
+            throw insertErr;
+          }
+        }
       } catch (err) {
         const msg =
           err instanceof Error ? err.message : "Unknown error";

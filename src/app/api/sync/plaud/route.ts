@@ -3,6 +3,7 @@ import { getUserIdFromRequest } from "@/lib/auth";
 import {
   syncFromPlaud,
   getSyncState,
+  claimSyncLock,
   savePlaudToken,
   clearPlaudToken,
   verifyPlaudToken,
@@ -121,18 +122,23 @@ export async function POST(request: Request) {
     }
 
     case "sync": {
-      // Check if already syncing
-      const state = getSyncState(userId);
-      if (state?.syncStatus === "syncing") {
+      // Atomic claim: prevents concurrent sync races
+      const claimed = claimSyncLock(userId);
+      if (!claimed) {
         return NextResponse.json(
           { error: "Sync already in progress" },
           { status: 409 }
         );
       }
 
-      const result = await syncFromPlaud(userId, {
-        limit: body.limit || 50,
-      });
+      // Validate and clamp limit (1–200, default 50)
+      const parsedLimit = Number(body.limit);
+      const limit =
+        Number.isInteger(parsedLimit) && parsedLimit > 0
+          ? Math.min(parsedLimit, 200)
+          : 50;
+
+      const result = await syncFromPlaud(userId, { limit });
 
       return NextResponse.json(result);
     }

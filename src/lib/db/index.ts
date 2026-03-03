@@ -119,7 +119,20 @@ function ensureInitialized(): void {
         );
       } catch (migrationError) {
         console.error("Transcripts plaud_file_id migration failed:", migrationError);
+        throw migrationError;
       }
+    }
+
+    // Enforce Plaud file deduplication at the DB level (partial unique index)
+    try {
+      sqlite.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS uq_transcripts_user_plaud_file_id
+         ON transcripts(user_id, plaud_file_id)
+         WHERE plaud_file_id IS NOT NULL`
+      );
+    } catch (uniqueIdxError) {
+      console.error("Plaud dedup unique index creation failed:", uniqueIdxError);
+      throw uniqueIdxError;
     }
 
     // Migrate old templates schema if needed

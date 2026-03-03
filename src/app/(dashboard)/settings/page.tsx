@@ -147,11 +147,16 @@ export default function SettingsPage() {
 
   const handlePlaudDisconnect = async () => {
     try {
-      await authFetch("/api/sync/plaud", {
+      const res = await authFetch("/api/sync/plaud", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "disconnect" }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPlaudMessage({ type: "error", text: data.error || "Failed to disconnect" });
+        return;
+      }
       setPlaudMessage({ type: "success", text: "Disconnected from Plaud" });
       await fetchPlaudStatus();
     } catch {
@@ -169,7 +174,12 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "sync" }),
       });
-      const data: SyncResult = await res.json();
+      const raw = await res.json();
+      if (!res.ok) {
+        setPlaudMessage({ type: "error", text: raw.error || "Sync failed" });
+        return;
+      }
+      const data: SyncResult = raw;
 
       if (data.success) {
         const parts = [];
