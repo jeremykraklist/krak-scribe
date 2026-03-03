@@ -34,6 +34,7 @@ export const transcripts = sqliteTable("transcripts", {
   speakerDiarization: text("speaker_diarization"), // JSON string of speaker segments
   language: text("language"),
   errorMessage: text("error_message"),
+  plaudFileId: text("plaud_file_id"), // Plaud Cloud file ID for sync dedup
   createdAt: text("created_at")
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
@@ -81,6 +82,30 @@ export const processedOutputs = sqliteTable("processed_outputs", {
     .$defaultFn(() => new Date().toISOString()),
 });
 
+export const plaudSyncState = sqliteTable("plaud_sync_state", {
+  id: text("id").primaryKey(), // UUID
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  plaudToken: text("plaud_token").notNull().default(""),
+  plaudEmail: text("plaud_email"),
+  lastSyncAt: text("last_sync_at"),
+  lastSyncFileCount: integer("last_sync_file_count").default(0),
+  lastSyncError: text("last_sync_error"),
+  syncStatus: text("sync_status", {
+    enum: ["idle", "syncing", "error", "disconnected"],
+  })
+    .notNull()
+    .default("idle"),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 // Type exports
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -90,3 +115,5 @@ export type Template = typeof templates.$inferSelect;
 export type NewTemplate = typeof templates.$inferInsert;
 export type ProcessedOutput = typeof processedOutputs.$inferSelect;
 export type NewProcessedOutput = typeof processedOutputs.$inferInsert;
+export type PlaudSyncState = typeof plaudSyncState.$inferSelect;
+export type NewPlaudSyncState = typeof plaudSyncState.$inferInsert;

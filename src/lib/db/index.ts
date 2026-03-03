@@ -90,7 +90,37 @@ function ensureInitialized(): void {
       CREATE INDEX IF NOT EXISTS idx_transcripts_status ON transcripts(status);
       CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
       CREATE INDEX IF NOT EXISTS idx_processed_outputs_transcript_id ON processed_outputs(transcript_id);
+
+      CREATE TABLE IF NOT EXISTS plaud_sync_state (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL UNIQUE REFERENCES users(id),
+        plaud_token TEXT NOT NULL DEFAULT '',
+        plaud_email TEXT,
+        last_sync_at TEXT,
+        last_sync_file_count INTEGER DEFAULT 0,
+        last_sync_error TEXT,
+        sync_status TEXT NOT NULL DEFAULT 'idle',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
     `);
+
+    // Migrate transcripts: add plaud_file_id column if missing
+    const transcriptInfo = sqlite
+      .prepare("PRAGMA table_info(transcripts)")
+      .all() as Array<{ name: string }>;
+    const transcriptColumns = transcriptInfo.map((c) => c.name);
+
+    if (!transcriptColumns.includes("plaud_file_id")) {
+      try {
+        sqlite.exec("ALTER TABLE transcripts ADD COLUMN plaud_file_id TEXT");
+        sqlite.exec(
+          "CREATE INDEX IF NOT EXISTS idx_transcripts_plaud_file_id ON transcripts(plaud_file_id)"
+        );
+      } catch (migrationError) {
+        console.error("Transcripts plaud_file_id migration failed:", migrationError);
+      }
+    }
 
     // Migrate old templates schema if needed
     const tableInfo = sqlite

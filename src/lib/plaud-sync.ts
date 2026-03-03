@@ -1,0 +1,516 @@
+/**
+ * Plaud Cloud Sync — reverse-engineered from web.plaud.ai
+ *
+ * Auth flow:
+ *   Plaud uses OAuth (Google/Apple) or email+password login.
+ *   After login, the web app stores "tokenstr" in localStorage
+ *   as "Bearer <access_token>". All API calls use this as the
+ *   Authorization header.
+ *
+ * For KrakScribe sync, the user provides their Plaud session token
+ * (copied from browser localStorage after logging in at web.plaud.ai).
+ *
+ * API base: https://api.plaud.ai
+ *
+ * Key endpoints discovered:
+ *   GET  /file/simple/web            — list files (recordings)
+ *   GET  /file/detail/{id}           — file metadata + transcript
+ *   GET  /file/temp-url/{id}         — temporary S3 download URL
+ *   GET  /user/public/me             — verify token / get user info
+ *   GET  /config/init                — app config
+ */
+
+import { existsSync, mkdirSync } from "fs";
+import { writeFile } from "fs/promises";
+import path from "path";
+import { v4 as uuidv4 } from "uuid";
+import { db } from "./db";
+import { transcripts, plaudSyncState } from "./db/schema";
+import { eq, and } from "drizzle-orm";
+
+const PLAUD_API_BASE = "https://api.plaud.ai";
+const UPLOAD_DIR = path.join(process.cwd(), "data", "uploads");
+const FETCH_TIMEOUT = 30_000;
+const DOWNLOAD_TIMEOUT = 120_000;
+
+// ─── Types ───────────────────────────────────────────────────────────
+
+export interface PlaudFile {
+  id: string;
+  filename: string;
+  duration: number; // seconds
+  file_size: number;
+  create_time: string;
+  update_time: string;
+  is_trash: boolean;
+  status: number;
+  filetag_id_list?: string[];
+  file_version?: number;
+  has_transcript?: boolean;
+}
+
+export interface PlaudFileDetail {
+  id: string;
+  filename: string;
+  duration: number;
+  file_size: number;
+  create_time: string;
+  data_file: PlaudFile;
+  data_transcript?: {
+    segments?: Array<{
+      start: number;
+      end: number;
+      text: string;
+      speaker?: string;
+    }>;
+    text?: string;
+  };
+  data_summary?: {
+    content?: string;
+  };
+}
+
+export interface PlaudUser {
+  id: string;
+  email: string;
+  nickname: string;
+}
+
+export interface SyncResult {
+  success: boolean;
+  filesFound: number;
+  filesDownloaded: number;
+  filesSkipped: number;
+  errors: string[];
+}
+
+// ─── API Client ──────────────────────────────────────────────────────
+
+async function plaudFetch(
+  endpoint: string,
+  token: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  const url = endpoint.startsWith("http")
+    ? endpoint
+    : `${PLAUD_API_BASE}${endpoint}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.method === "GET" ? FETCH_TIMEOUT : FETCH_TIMEOUT
+  );
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+      signal: controller.signal,
+    });
+    return response;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Verify token is valid by calling /user/public/me
+ */
+export async function verifyPlaudToken(
+  token: string
+): Promise<PlaudUser | null> {
+  try {
+    const res = await plaudFetch("/user/public/me", token);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // The endpoint returns user data directly or nested
+    return data.id
+      ? (data as PlaudUser)
+      : data.data_user
+        ? (data.data_user as PlaudUser)
+        : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List recordings from Plaud cloud.
+ * Returns array of file objects sorted by create_time desc.
+ */
+export async function listPlaudFiles(
+  token: string,
+  options: { limit?: number; offset?: number } = {}
+): Promise<PlaudFile[]> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("page_size", String(options.limit));
+  if (options.offset) params.set("offset", String(options.offset));
+
+  const queryStr = params.toString();
+  const endpoint = `/file/simple/web${queryStr ? `?${queryStr}` : ""}`;
+
+  const res = await plaudFetch(endpoint, token);
+  if (!res.ok) {
+    throw new Error(`Plaud API error listing files: ${res.status}`);
+  }
+
+  const data = await res.json();
+  const files: PlaudFile[] = data.data_file_list || data.data || [];
+
+  // Filter out trashed files
+  return files.filter((f) => !f.is_trash);
+}
+
+/**
+ * Get detailed info for a single file, including transcript if available.
+ */
+export async function getPlaudFileDetail(
+  fileId: string,
+  token: string
+): Promise<PlaudFileDetail | null> {
+  try {
+    const res = await plaudFetch(`/file/detail/${fileId}`, token);
+    if (!res.ok) return null;
+    return (await res.json()) as PlaudFileDetail;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get a temporary download URL for the audio file.
+ * Plaud stores audio on S3 and returns a pre-signed URL.
+ */
+export async function getPlaudAudioUrl(
+  fileId: string,
+  token: string
+): Promise<string | null> {
+  try {
+    const res = await plaudFetch(`/file/temp-url/${fileId}`, token);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Response contains the temporary URL - could be nested
+    return (
+      data.url || data.temp_url || data.data?.url || data.data?.temp_url || null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Download audio file from Plaud's temporary S3 URL to local storage.
+ */
+async function downloadAudioFile(
+  downloadUrl: string,
+  filename: string
+): Promise<{ storedFilename: string; filePath: string; fileSize: number }> {
+  if (!existsSync(UPLOAD_DIR)) {
+    mkdirSync(UPLOAD_DIR, { recursive: true });
+  }
+
+  const ext = path.extname(filename).toLowerCase() || ".m4a";
+  const storedFilename = `plaud-${uuidv4()}${ext}`;
+  const filePath = path.join(UPLOAD_DIR, storedFilename);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT);
+
+  try {
+    const res = await fetch(downloadUrl, { signal: controller.signal });
+    if (!res.ok) {
+      throw new Error(`Download failed: ${res.status}`);
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    await writeFile(filePath, buffer);
+
+    return {
+      storedFilename,
+      filePath,
+      fileSize: buffer.length,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ─── Sync Logic ──────────────────────────────────────────────────────
+
+/**
+ * Get sync state for a user.
+ */
+export function getSyncState(userId: string) {
+  const [state] = db
+    .select()
+    .from(plaudSyncState)
+    .where(eq(plaudSyncState.userId, userId))
+    .limit(1)
+    .all();
+  return state || null;
+}
+
+/**
+ * Update sync state after a sync run.
+ */
+type SyncStatusEnum = "idle" | "syncing" | "error" | "disconnected";
+
+function updateSyncState(
+  userId: string,
+  updates: {
+    lastSyncAt?: string;
+    lastSyncFileCount?: number;
+    lastSyncError?: string | null;
+    plaudEmail?: string;
+    syncStatus?: SyncStatusEnum;
+  }
+) {
+  const existing = getSyncState(userId);
+  const now = new Date().toISOString();
+
+  if (existing) {
+    db.update(plaudSyncState)
+      .set({ ...updates, updatedAt: now })
+      .where(eq(plaudSyncState.userId, userId))
+      .run();
+  } else {
+    db.insert(plaudSyncState)
+      .values({
+        id: uuidv4(),
+        userId,
+        plaudToken: "",
+        plaudEmail: updates.plaudEmail || null,
+        lastSyncAt: updates.lastSyncAt || null,
+        lastSyncFileCount: updates.lastSyncFileCount || 0,
+        lastSyncError: updates.lastSyncError || null,
+        syncStatus: updates.syncStatus || "idle",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+}
+
+/**
+ * Save/update the Plaud token for a user.
+ */
+export function savePlaudToken(userId: string, token: string) {
+  const existing = getSyncState(userId);
+  const now = new Date().toISOString();
+
+  // Normalize token format
+  const normalizedToken = token.startsWith("Bearer ")
+    ? token
+    : `Bearer ${token}`;
+
+  if (existing) {
+    db.update(plaudSyncState)
+      .set({ plaudToken: normalizedToken, updatedAt: now })
+      .where(eq(plaudSyncState.userId, userId))
+      .run();
+  } else {
+    db.insert(plaudSyncState)
+      .values({
+        id: uuidv4(),
+        userId,
+        plaudToken: normalizedToken,
+        plaudEmail: null,
+        lastSyncAt: null,
+        lastSyncFileCount: 0,
+        lastSyncError: null,
+        syncStatus: "idle",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+}
+
+/**
+ * Get the stored Plaud token for a user.
+ */
+export function getPlaudToken(userId: string): string | null {
+  const state = getSyncState(userId);
+  return state?.plaudToken || null;
+}
+
+/**
+ * Clear the Plaud token (disconnect).
+ */
+export function clearPlaudToken(userId: string) {
+  const existing = getSyncState(userId);
+  if (existing) {
+    db.update(plaudSyncState)
+      .set({
+        plaudToken: "",
+        syncStatus: "disconnected",
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(plaudSyncState.userId, userId))
+      .run();
+  }
+}
+
+/**
+ * Check if a Plaud file has already been synced (by plaud_file_id on transcripts).
+ */
+function isAlreadySynced(plaudFileId: string, userId: string): boolean {
+  const [existing] = db
+    .select({ id: transcripts.id })
+    .from(transcripts)
+    .where(
+      and(
+        eq(transcripts.userId, userId),
+        eq(transcripts.plaudFileId, plaudFileId)
+      )
+    )
+    .limit(1)
+    .all();
+  return !!existing;
+}
+
+/**
+ * Main sync function: pull new recordings from Plaud Cloud.
+ *
+ * Flow:
+ *   1. Verify token
+ *   2. List files from Plaud
+ *   3. For each new file (not already synced):
+ *     a. Get download URL
+ *     b. Download audio to data/uploads/
+ *     c. Create transcript record in pending state
+ *   4. Update sync state
+ *
+ * Returns summary of what was synced.
+ */
+export async function syncFromPlaud(
+  userId: string,
+  options: { limit?: number; autoTranscribe?: boolean } = {}
+): Promise<SyncResult> {
+  const result: SyncResult = {
+    success: false,
+    filesFound: 0,
+    filesDownloaded: 0,
+    filesSkipped: 0,
+    errors: [],
+  };
+
+  // Get stored token
+  const token = getPlaudToken(userId);
+  if (!token) {
+    result.errors.push("No Plaud token configured. Connect your Plaud account first.");
+    updateSyncState(userId, {
+      lastSyncError: "No token",
+      syncStatus: "error",
+    });
+    return result;
+  }
+
+  // Update status to syncing
+  updateSyncState(userId, { syncStatus: "syncing" });
+
+  try {
+    // 1. Verify token
+    const user = await verifyPlaudToken(token);
+    if (!user) {
+      result.errors.push(
+        "Plaud token is invalid or expired. Please reconnect your account."
+      );
+      updateSyncState(userId, {
+        lastSyncError: "Token expired",
+        syncStatus: "error",
+      });
+      return result;
+    }
+
+    // 2. List files
+    const files = await listPlaudFiles(token, {
+      limit: options.limit || 50,
+    });
+    result.filesFound = files.length;
+
+    // 3. Process each file
+    for (const file of files) {
+      try {
+        // Skip if already synced
+        if (isAlreadySynced(file.id, userId)) {
+          result.filesSkipped++;
+          continue;
+        }
+
+        // Get download URL
+        const audioUrl = await getPlaudAudioUrl(file.id, token);
+        if (!audioUrl) {
+          result.errors.push(
+            `Could not get download URL for "${file.filename}"`
+          );
+          continue;
+        }
+
+        // Determine file extension from filename
+        const originalFilename = file.filename || `plaud-recording-${file.id}`;
+        const ext = path.extname(originalFilename) || ".m4a";
+        const safeFilename = `${originalFilename}${ext === originalFilename ? ".m4a" : ""}`;
+
+        // Download audio
+        const downloaded = await downloadAudioFile(audioUrl, safeFilename);
+
+        // Create transcript record
+        const transcriptId = uuidv4();
+        const now = new Date().toISOString();
+
+        db.insert(transcripts)
+          .values({
+            id: transcriptId,
+            userId,
+            originalFilename: file.filename || `Plaud Recording ${file.id}`,
+            storedFilename: downloaded.storedFilename,
+            filePath: downloaded.filePath,
+            mimeType: "audio/mp4",
+            fileSize: downloaded.fileSize,
+            duration: file.duration || null,
+            status: "pending",
+            plaudFileId: file.id,
+            createdAt: file.create_time || now,
+            updatedAt: now,
+          })
+          .run();
+
+        result.filesDownloaded++;
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Unknown error";
+        result.errors.push(
+          `Failed to sync "${file.filename}": ${msg}`
+        );
+      }
+    }
+
+    // 4. Update sync state
+    const now = new Date().toISOString();
+    updateSyncState(userId, {
+      lastSyncAt: now,
+      lastSyncFileCount: result.filesDownloaded,
+      lastSyncError:
+        result.errors.length > 0
+          ? result.errors.join("; ")
+          : null,
+      plaudEmail: user.email || undefined,
+      syncStatus: "idle",
+    });
+
+    result.success = true;
+    return result;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Sync failed";
+    result.errors.push(msg);
+    updateSyncState(userId, {
+      lastSyncError: msg,
+      syncStatus: "error",
+    });
+    return result;
+  }
+}
