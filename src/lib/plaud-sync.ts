@@ -20,8 +20,10 @@
  *   GET  /config/init                — app config
  */
 
-import { existsSync, mkdirSync } from "fs";
-import { writeFile } from "fs/promises";
+import { existsSync, mkdirSync, createWriteStream } from "fs";
+import { stat, unlink } from "fs/promises";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { db } from "./db";
@@ -165,11 +167,11 @@ export async function listPlaudFiles(
   // Filter out trashed files and return newest first
   return files
     .filter((f) => !f.is_trash)
-    .sort(
-      (a, b) =>
-        Date.parse(b.create_time || "1970-01-01T00:00:00.000Z") -
-        Date.parse(a.create_time || "1970-01-01T00:00:00.000Z")
-    );
+    .sort((a, b) => {
+      const timeA = Date.parse(a.create_time || "");
+      const timeB = Date.parse(b.create_time || "");
+      return (Number.isFinite(timeB) ? timeB : 0) - (Number.isFinite(timeA) ? timeA : 0);
+    });
 }
 
 /**
@@ -232,13 +234,21 @@ async function downloadAudioFile(
     if (!res.ok) {
       throw new Error(`Download failed: ${res.status}`);
     }
-    const buffer = Buffer.from(await res.arrayBuffer());
-    await writeFile(filePath, buffer);
+    if (!res.body) {
+      throw new Error("Response body is null — cannot stream download");
+    }
+
+    // Stream to disk instead of buffering entire file in memory (prevents OOM on long recordings)
+    const readable = Readable.fromWeb(res.body as import("stream/web").ReadableStream);
+    const writable = createWriteStream(filePath);
+    await pipeline(readable, writable);
+
+    const fileStat = await stat(filePath);
 
     return {
       storedFilename,
       filePath,
-      fileSize: buffer.length,
+      fileSize: fileStat.size,
     };
   } finally {
     clearTimeout(timeout);
@@ -260,35 +270,94 @@ export function getSyncState(userId: string) {
   return state || null;
 }
 
+const STALE_LOCK_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Check if a sync lock is stale (updatedAt older than STALE_LOCK_MS).
+ */
+function isLockStale(updatedAt: string | null): boolean {
+  if (!updatedAt) return true;
+  const elapsed = Date.now() - new Date(updatedAt).getTime();
+  return elapsed > STALE_LOCK_MS;
+}
+
 /**
  * Atomically claim sync lock for a user using compare-and-set.
  * Returns true if the claim succeeded (status was NOT 'syncing' and is now 'syncing').
  * Returns false if another sync is already in progress.
+ *
+ * Handles:
+ *   - First-time insert race (UNIQUE constraint catch + re-read)
+ *   - Stale lock reclamation (if syncing but updatedAt > 10 min old)
  */
 export function claimSyncLock(userId: string): boolean {
   const existing = getSyncState(userId);
   const now = new Date().toISOString();
 
   if (!existing) {
-    // No state row yet — create one in 'syncing' status
-    db.insert(plaudSyncState)
-      .values({
-        id: uuidv4(),
-        userId,
-        plaudToken: "",
-        plaudEmail: null,
-        lastSyncAt: null,
-        lastSyncFileCount: 0,
-        lastSyncError: null,
-        syncStatus: "syncing",
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-    return true;
+    // No state row yet — create one in 'syncing' status.
+    // Wrap in try/catch: concurrent first-time claims can collide on UNIQUE constraint.
+    try {
+      db.insert(plaudSyncState)
+        .values({
+          id: uuidv4(),
+          userId,
+          plaudToken: "",
+          plaudEmail: null,
+          lastSyncAt: null,
+          lastSyncFileCount: 0,
+          lastSyncError: null,
+          syncStatus: "syncing",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      return true;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("UNIQUE constraint failed")) {
+        // Another process inserted first — re-read and attempt CAS update
+        const reread = getSyncState(userId);
+        if (!reread) return false;
+        if (reread.syncStatus === "syncing") {
+          // Only reclaim if the lock is stale
+          if (isLockStale(reread.updatedAt)) {
+            const result = db
+              .update(plaudSyncState)
+              .set({ syncStatus: "syncing", updatedAt: now })
+              .where(eq(plaudSyncState.userId, userId))
+              .run();
+            return result.changes > 0;
+          }
+          return false;
+        }
+        // CAS update on the re-read state
+        const result = db
+          .update(plaudSyncState)
+          .set({ syncStatus: "syncing", updatedAt: now })
+          .where(
+            and(
+              eq(plaudSyncState.userId, userId),
+              eq(plaudSyncState.syncStatus, reread.syncStatus)
+            )
+          )
+          .run();
+        return result.changes > 0;
+      }
+      throw err;
+    }
   }
 
   if (existing.syncStatus === "syncing") {
+    // Check for stale lock (older than 10 minutes) — allows recovery from crashed syncs
+    if (isLockStale(existing.updatedAt)) {
+      const result = db
+        .update(plaudSyncState)
+        .set({ syncStatus: "syncing", updatedAt: now })
+        .where(eq(plaudSyncState.userId, userId))
+        .run();
+      return result.changes > 0;
+    }
     return false;
   }
 
@@ -550,6 +619,12 @@ export async function syncFromPlaud(
           if (errMsg.includes("UNIQUE constraint failed")) {
             result.filesSkipped++;
           } else {
+            // Clean up downloaded file to prevent disk leaks on unexpected insert failures
+            try {
+              await unlink(downloaded.filePath);
+            } catch {
+              // Ignore unlink errors (file may already be gone)
+            }
             throw insertErr;
           }
         }
