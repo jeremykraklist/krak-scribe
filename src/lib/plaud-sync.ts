@@ -513,8 +513,10 @@ export async function syncFromPlaud(
 
         // Determine file extension from filename
         const originalFilename = file.filename || `plaud-recording-${file.id}`;
-        const ext = path.extname(originalFilename) || ".m4a";
-        const safeFilename = `${originalFilename}${ext === originalFilename ? ".m4a" : ""}`;
+        // Only append extension if the original filename doesn't have one
+        const safeFilename = path.extname(originalFilename)
+          ? originalFilename
+          : `${originalFilename}.m4a`;
 
         // Download audio
         const downloaded = await downloadAudioFile(audioUrl, safeFilename);
