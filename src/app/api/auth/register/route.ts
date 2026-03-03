@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { createUser, generateToken } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
+  // Registration disabled — accounts created via CLI/API only
+  if (process.env.ALLOW_REGISTRATION !== "true") {
+    return NextResponse.json(
+      { error: "Registration is disabled" },
+      { status: 403 }
+    );
+  }
+
   try {
     const body = await request.json();
     const { email, password, name } = body;
