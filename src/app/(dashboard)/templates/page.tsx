@@ -11,7 +11,9 @@ interface Template {
   id: string;
   name: string;
   description: string | null;
-  promptTemplate: string;
+  systemPrompt: string;
+  userPromptTemplate: string;
+  model: string;
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
@@ -130,7 +132,8 @@ export default function TemplatesPage() {
             initialData={{
               name: editingTemplate.name,
               description: editingTemplate.description || "",
-              promptTemplate: editingTemplate.promptTemplate,
+              systemPrompt: editingTemplate.systemPrompt,
+              userPromptTemplate: editingTemplate.userPromptTemplate,
             }}
             onSubmit={handleUpdate}
             onCancel={() => setEditingTemplate(null)}
@@ -243,7 +246,7 @@ export default function TemplatesPage() {
               {/* Preview */}
               <div className="bg-background border border-border rounded-lg p-3 mb-4">
                 <p className="text-xs text-muted font-mono line-clamp-3">
-                  {t.promptTemplate}
+                  {t.userPromptTemplate}
                 </p>
               </div>
 

@@ -5,7 +5,8 @@ import { useState, useEffect } from "react";
 export interface TemplateFormData {
   name: string;
   description: string;
-  promptTemplate: string;
+  systemPrompt: string;
+  userPromptTemplate: string;
 }
 
 interface TemplateFormProps {
@@ -33,8 +34,11 @@ export default function TemplateForm({
   const [description, setDescription] = useState(
     initialData?.description || ""
   );
-  const [promptTemplate, setPromptTemplate] = useState(
-    initialData?.promptTemplate || ""
+  const [systemPrompt, setSystemPrompt] = useState(
+    initialData?.systemPrompt || ""
+  );
+  const [userPromptTemplate, setUserPromptTemplate] = useState(
+    initialData?.userPromptTemplate || ""
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +47,8 @@ export default function TemplateForm({
     if (initialData) {
       setName(initialData.name);
       setDescription(initialData.description);
-      setPromptTemplate(initialData.promptTemplate);
+      setSystemPrompt(initialData.systemPrompt);
+      setUserPromptTemplate(initialData.userPromptTemplate);
     }
   }, [initialData]);
 
@@ -51,14 +56,14 @@ export default function TemplateForm({
     e.preventDefault();
     setError(null);
 
-    if (!name.trim() || !promptTemplate.trim()) {
-      setError("Name and prompt template are required");
+    if (!name.trim() || !userPromptTemplate.trim()) {
+      setError("Name and user prompt template are required");
       return;
     }
 
     setSubmitting(true);
     try {
-      await onSubmit({ name, description, promptTemplate });
+      await onSubmit({ name, description, systemPrompt, userPromptTemplate });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save template");
     } finally {
@@ -67,7 +72,7 @@ export default function TemplateForm({
   };
 
   const insertVariable = (varName: string) => {
-    setPromptTemplate((prev) => prev + varName);
+    setUserPromptTemplate((prev) => prev + varName);
   };
 
   return (
@@ -103,8 +108,28 @@ export default function TemplateForm({
 
       <div>
         <label className="block text-sm font-medium mb-2">
-          Prompt Template
+          System Prompt
         </label>
+        <p className="text-muted text-xs mb-2">
+          Instructions for the AI&apos;s role and behavior. Defines how the AI should approach the task.
+        </p>
+        <textarea
+          value={systemPrompt}
+          onChange={(e) => setSystemPrompt(e.target.value)}
+          placeholder="e.g., You are an expert meeting analyst. Extract key decisions, action items, and important discussions."
+          rows={4}
+          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:border-accent transition-colors font-mono text-sm resize-y"
+          required
+        />
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium mb-2">
+          User Prompt Template
+        </label>
+        <p className="text-muted text-xs mb-2">
+          The prompt sent with each transcript. Use variables to inject data.
+        </p>
         <div className="mb-2 flex flex-wrap gap-2">
           {VARIABLES.map((v) => (
             <button
@@ -119,9 +144,9 @@ export default function TemplateForm({
           ))}
         </div>
         <textarea
-          value={promptTemplate}
-          onChange={(e) => setPromptTemplate(e.target.value)}
-          placeholder="Enter your prompt template. Use variables like {{transcript}} to inject data."
+          value={userPromptTemplate}
+          onChange={(e) => setUserPromptTemplate(e.target.value)}
+          placeholder="e.g., Summarize the following transcript:\n\n{{transcript}}\n\nSpeakers: {{speakers}}\nDate: {{date}}"
           rows={8}
           className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:border-accent transition-colors font-mono text-sm resize-y"
           required
