@@ -5,6 +5,26 @@ import { transcripts } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 
 /**
+ * Detect foreign key constraint errors across SQLite drivers and ORMs.
+ * Checks driver-specific error codes and falls back to message regex.
+ */
+function isForeignKeyError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  // Check driver-specific error codes (better-sqlite3, libsql, etc.)
+  const errWithCode = error as Error & { code?: string };
+  if (
+    errWithCode.code === "SQLITE_CONSTRAINT_FOREIGNKEY" ||
+    errWithCode.code === "SQLITE_CONSTRAINT"
+  ) {
+    return true;
+  }
+
+  // Fallback: regex match on message (covers most SQLite drivers)
+  return /FOREIGN KEY constraint failed/i.test(error.message);
+}
+
+/**
  * GET /api/transcripts/[id] — Get a single transcript by ID.
  * Returns the transcript record with parsed segments and speakers.
  */
@@ -100,28 +120,24 @@ export async function DELETE(
       );
     }
 
-    // Delete the transcript (processed_outputs will fail if FK constraint)
-    // For now, just delete the transcript record
-    await db
-      .delete(transcripts)
-      .where(and(eq(transcripts.id, id), eq(transcripts.userId, userId)));
-
-    // Try to remove the uploaded file
+    // Try to remove the uploaded file first (best-effort, avoids orphaned files)
     if (transcript.filePath) {
       try {
         const { unlink } = await import("fs/promises");
         await unlink(transcript.filePath);
       } catch {
-        // Ignore file deletion errors (e.g. ENOENT)
+        // Ignore file deletion errors (e.g. ENOENT, permission issues)
       }
     }
 
+    // Delete the transcript (processed_outputs will fail if FK constraint)
+    await db
+      .delete(transcripts)
+      .where(and(eq(transcripts.id, id), eq(transcripts.userId, userId)));
+
     return NextResponse.json({ deleted: true, id });
   } catch (error) {
-    if (
-      error instanceof Error &&
-      /FOREIGN KEY constraint failed/i.test(error.message)
-    ) {
+    if (isForeignKeyError(error)) {
       return NextResponse.json(
         {
           error:
