@@ -1,8 +1,8 @@
 interface StatusBadgeProps {
-  status: "pending" | "transcribing" | "completed" | "failed";
+  status: "pending" | "transcribing" | "completed" | "processing" | "processed" | "failed";
 }
 
-const statusConfig = {
+const statusConfig: Record<string, { label: string; classes: string; dot: string }> = {
   pending: {
     label: "Pending",
     classes: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
@@ -14,9 +14,19 @@ const statusConfig = {
     dot: "bg-blue-400 animate-pulse",
   },
   completed: {
-    label: "Completed",
+    label: "Transcribed",
     classes: "bg-green-500/10 text-green-400 border-green-500/20",
     dot: "bg-green-400",
+  },
+  processing: {
+    label: "Processing",
+    classes: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+    dot: "bg-purple-400 animate-pulse",
+  },
+  processed: {
+    label: "Done",
+    classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    dot: "bg-emerald-400",
   },
   failed: {
     label: "Failed",

@@ -1,39 +1,100 @@
 "use client";
 
-import { useCallback, useState, useRef } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { authFetch } from "@/lib/auth-client";
 
 const ACCEPTED_EXTENSIONS = ".m4a,.mp3,.wav,.webm,.ogg,.flac";
 
+type PipelineStep = "idle" | "uploading" | "transcribing" | "processing" | "done" | "error";
+
+const STEP_LABELS: Record<PipelineStep, string> = {
+  idle: "",
+  uploading: "Uploading audio...",
+  transcribing: "Transcribing with Whisper...",
+  processing: "Applying AI template...",
+  done: "All done! Redirecting...",
+  error: "Something went wrong",
+};
+
+const STEPS: { key: PipelineStep; icon: string; label: string }[] = [
+  { key: "uploading", icon: "⬆️", label: "Upload" },
+  { key: "transcribing", icon: "🎙️", label: "Transcribe" },
+  { key: "processing", icon: "🤖", label: "Process" },
+  { key: "done", icon: "✅", label: "Done" },
+];
+
+function getStepIndex(step: PipelineStep): number {
+  const idx = STEPS.findIndex((s) => s.key === step);
+  return idx >= 0 ? idx : -1;
+}
+
 export default function UploadZone() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [step, setStep] = useState<PipelineStep>("idle");
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [transcriptId, setTranscriptId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Poll for transcript status after upload
+  useEffect(() => {
+    if (!transcriptId || step === "done" || step === "error" || step === "idle") {
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        const res = await authFetch(`/api/transcribe/${transcriptId}`);
+        if (!res.ok) return;
+
+        const data = await res.json();
+        const status = data.status as string;
+
+        if (status === "transcribing") {
+          setStep("transcribing");
+        } else if (status === "processing") {
+          setStep("processing");
+        } else if (status === "processed") {
+          setStep("done");
+          // Redirect to transcript detail after a brief moment
+          setTimeout(() => {
+            router.push(`/transcripts/${transcriptId}`);
+          }, 800);
+        } else if (status === "completed") {
+          // Transcription done but no auto-process (no default template)
+          setStep("done");
+          setTimeout(() => {
+            router.push(`/transcripts/${transcriptId}`);
+          }, 800);
+        } else if (status === "failed") {
+          setStep("error");
+          setError(data.errorMessage || "Pipeline failed");
+        }
+      } catch {
+        // Silently retry on poll errors
+      }
+    };
+
+    // Start polling
+    pollRef.current = setInterval(poll, 2000);
+    // Also poll immediately
+    poll();
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [transcriptId, step, router]);
 
   const uploadFile = useCallback(
     async (file: File) => {
       setError(null);
-      setUploading(true);
-      setProgress(0);
+      setStep("uploading");
       setFileName(file.name);
 
       try {
-        // Simulate progress (since fetch doesn't give upload progress natively)
-        const progressInterval = setInterval(() => {
-          setProgress((prev) => {
-            if (prev >= 90) {
-              clearInterval(progressInterval);
-              return 90;
-            }
-            return prev + Math.random() * 15;
-          });
-        }, 200);
-
         const formData = new FormData();
         formData.append("file", file);
 
@@ -42,43 +103,28 @@ export default function UploadZone() {
           body: formData,
         });
 
-        clearInterval(progressInterval);
-
         if (!response.ok) {
           const data = await response.json();
           throw new Error(data.error || "Upload failed");
         }
 
         const data = await response.json();
-        setProgress(100);
-
-        // Auto-start transcription
-        await authFetch(`/api/transcribe/${data.transcript.id}`, {
-          method: "POST",
-        });
-
-        // Redirect to transcript detail regardless of transcription result
-        setTimeout(() => {
-          router.push(`/transcripts/${data.transcript.id}`);
-        }, 500);
+        setTranscriptId(data.transcript.id);
+        setStep("transcribing"); // Upload done, pipeline starts
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
-        setUploading(false);
-        setProgress(0);
+        setStep("error");
       }
     },
-    [router]
+    []
   );
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
-
       const file = e.dataTransfer.files[0];
-      if (file) {
-        uploadFile(file);
-      }
+      if (file) uploadFile(file);
     },
     [uploadFile]
   );
@@ -86,32 +132,42 @@ export default function UploadZone() {
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) {
-        uploadFile(file);
-      }
+      if (file) uploadFile(file);
     },
     [uploadFile]
   );
 
+  const handleReset = () => {
+    setStep("idle");
+    setError(null);
+    setFileName(null);
+    setTranscriptId(null);
+    if (pollRef.current) clearInterval(pollRef.current);
+  };
+
+  const isActive = step !== "idle";
+  const currentStepIndex = getStepIndex(step);
+
   return (
     <div className="w-full max-w-2xl mx-auto">
+      {/* Drop zone / Pipeline progress */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
-          setIsDragging(true);
+          if (!isActive) setIsDragging(true);
         }}
         onDragLeave={(e) => {
           e.preventDefault();
           setIsDragging(false);
         }}
-        onDrop={handleDrop}
-        onClick={() => !uploading && fileInputRef.current?.click()}
-        className={`relative border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-200 ${
+        onDrop={isActive ? undefined : handleDrop}
+        onClick={() => !isActive && fileInputRef.current?.click()}
+        className={`relative border-2 border-dashed rounded-xl p-8 sm:p-12 text-center transition-all duration-200 ${
           isDragging
-            ? "border-accent bg-accent/5 scale-[1.02]"
-            : uploading
+            ? "border-accent bg-accent/5 scale-[1.02] cursor-pointer"
+            : isActive
               ? "border-border bg-surface cursor-default"
-              : "border-border hover:border-accent/50 hover:bg-surface-hover"
+              : "border-border hover:border-accent/50 hover:bg-surface-hover cursor-pointer"
         }`}
       >
         <input
@@ -120,49 +176,85 @@ export default function UploadZone() {
           accept={ACCEPTED_EXTENSIONS}
           onChange={handleFileSelect}
           className="hidden"
-          disabled={uploading}
+          disabled={isActive}
         />
 
-        {uploading ? (
-          <div className="space-y-4">
-            <div className="w-12 h-12 mx-auto rounded-full bg-accent/10 flex items-center justify-center">
-              <svg
-                className="w-6 h-6 text-accent animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
+        {isActive ? (
+          <div className="space-y-6">
+            {/* File name */}
+            <p className="text-sm font-medium text-muted truncate px-4">
+              {fileName}
+            </p>
+
+            {/* Pipeline steps */}
+            <div className="flex items-center justify-center gap-2 sm:gap-4">
+              {STEPS.map((s, i) => {
+                const isCompleted = currentStepIndex > i;
+                const isCurrent = currentStepIndex === i;
+                const isPending = currentStepIndex < i;
+                const isFailed = step === "error" && isCurrent;
+
+                return (
+                  <div key={s.key} className="flex items-center gap-2 sm:gap-4">
+                    {/* Step circle */}
+                    <div className="flex flex-col items-center gap-1.5">
+                      <div
+                        className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-lg sm:text-xl transition-all duration-300 ${
+                          isFailed
+                            ? "bg-red-500/10 border-2 border-red-500/40"
+                            : isCompleted
+                              ? "bg-green-500/10 border-2 border-green-500/40"
+                              : isCurrent
+                                ? "bg-accent/10 border-2 border-accent/40 animate-pulse"
+                                : "bg-surface border-2 border-border opacity-40"
+                        }`}
+                      >
+                        {isFailed ? "❌" : isCompleted ? "✓" : s.icon}
+                      </div>
+                      <span
+                        className={`text-[10px] sm:text-xs font-medium ${
+                          isFailed
+                            ? "text-red-400"
+                            : isCompleted
+                              ? "text-green-400"
+                              : isCurrent
+                                ? "text-accent"
+                                : "text-muted opacity-40"
+                        }`}
+                      >
+                        {s.label}
+                      </span>
+                    </div>
+
+                    {/* Connector line */}
+                    {i < STEPS.length - 1 && (
+                      <div
+                        className={`hidden sm:block w-8 h-0.5 rounded-full transition-all duration-300 mb-5 ${
+                          isCompleted
+                            ? "bg-green-500/40"
+                            : "bg-border"
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Status text */}
+            <p className={`text-sm ${step === "error" ? "text-red-400" : "text-muted"}`}>
+              {STEP_LABELS[step]}
+            </p>
+
+            {/* Error retry */}
+            {step === "error" && (
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 bg-surface border border-border rounded-lg text-sm hover:bg-surface-hover transition-colors"
               >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-medium">{fileName}</p>
-              <p className="text-muted text-xs mt-1">
-                {progress < 90
-                  ? "Uploading..."
-                  : progress < 100
-                    ? "Transcribing..."
-                    : "Done!"}
-              </p>
-            </div>
-            {/* Progress bar */}
-            <div className="w-full max-w-xs mx-auto bg-border rounded-full h-2 overflow-hidden">
-              <div
-                className="h-full bg-accent rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${Math.min(progress, 100)}%` }}
-              />
-            </div>
+                Try Again
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
@@ -182,21 +274,21 @@ export default function UploadZone() {
               </svg>
             </div>
             <div>
-              <p className="text-lg font-medium">
-                Drop your audio file here
-              </p>
-              <p className="text-muted text-sm mt-1">
-                or click to browse
-              </p>
+              <p className="text-lg font-medium">Drop your audio file here</p>
+              <p className="text-muted text-sm mt-1">or tap to browse</p>
             </div>
             <p className="text-muted text-xs">
               Supports: M4A, MP3, WAV, WebM, OGG, FLAC • Max 100MB
+            </p>
+            <p className="text-accent/70 text-xs font-medium">
+              Zero-click: upload → auto-transcribe → auto-process → done
             </p>
           </div>
         )}
       </div>
 
-      {error && (
+      {/* Error banner (for non-pipeline errors) */}
+      {error && step !== "error" && (
         <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm">
           {error}
         </div>

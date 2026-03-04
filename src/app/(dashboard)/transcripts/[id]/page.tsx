@@ -17,7 +17,7 @@ interface Segment {
 interface TranscriptDetail {
   id: string;
   originalFilename: string;
-  status: "pending" | "transcribing" | "completed" | "failed";
+  status: "pending" | "transcribing" | "completed" | "processing" | "processed" | "failed";
   fileSize: number;
   mimeType: string;
   duration: number | null;
@@ -115,11 +115,12 @@ export default function TranscriptDetailPage() {
     fetchData();
   }, [fetchData]);
 
-  // Poll for status if transcribing
+  // Poll for status while pipeline is active
   useEffect(() => {
     if (
       transcript?.status === "transcribing" ||
-      transcript?.status === "pending"
+      transcript?.status === "pending" ||
+      transcript?.status === "processing"
     ) {
       const interval = setInterval(fetchData, 3000);
       return () => clearInterval(interval);
@@ -142,8 +143,8 @@ export default function TranscriptDetailPage() {
       }
 
       const data = await res.json();
-      setOutputs((prev) => [data.output, ...prev]);
-      setActiveOutputTab(data.output.id);
+      setOutputs((prev) => [data, ...prev]);
+      setActiveOutputTab(data.id);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Processing failed");
     } finally {
@@ -290,22 +291,25 @@ export default function TranscriptDetailPage() {
         </div>
       )}
 
-      {/* Transcribing status */}
+      {/* Pipeline progress status */}
       {(transcript.status === "transcribing" ||
-        transcript.status === "pending") && (
+        transcript.status === "pending" ||
+        transcript.status === "processing") && (
         <div className="p-8 bg-surface border border-border rounded-xl text-center">
           <LoadingSpinner
             text={
               transcript.status === "pending"
                 ? "Waiting to start transcription..."
-                : "Transcribing your audio..."
+                : transcript.status === "transcribing"
+                  ? "🎙️ Transcribing your audio..."
+                  : "🤖 Applying AI template..."
             }
           />
         </div>
       )}
 
       {/* Content: Two panels */}
-      {transcript.status === "completed" && transcript.text && (
+      {(transcript.status === "completed" || transcript.status === "processed") && transcript.text && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {/* Left: Transcript */}
           <div className="bg-surface border border-border rounded-xl overflow-hidden">

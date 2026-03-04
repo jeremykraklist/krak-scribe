@@ -25,7 +25,7 @@ export const transcripts = sqliteTable("transcripts", {
   fileSize: integer("file_size").notNull(), // bytes
   duration: integer("duration"), // seconds, populated after transcription
   status: text("status", {
-    enum: ["pending", "transcribing", "completed", "failed"],
+    enum: ["pending", "transcribing", "completed", "processing", "processed", "failed"],
   })
     .notNull()
     .default("pending"),

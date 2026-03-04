@@ -95,18 +95,18 @@ export async function PUT(
       );
     }
 
-    const { name, description, systemPrompt, userPromptTemplate, model } =
+    const { name, description, systemPrompt, userPromptTemplate, model, isDefault } =
       (body ?? {}) as Record<string, unknown>;
 
     // Build update payload — only include provided fields
     const updates: Record<string, unknown> = {};
 
     // Check if any updatable field was actually provided
-    const updatableKeys = ["name", "description", "systemPrompt", "userPromptTemplate", "model"];
+    const updatableKeys = ["name", "description", "systemPrompt", "userPromptTemplate", "model", "isDefault"];
     const hasUpdates = updatableKeys.some((k) => (body as Record<string, unknown>)[k] !== undefined);
     if (!hasUpdates) {
       return NextResponse.json(
-        { error: "No updatable fields provided. Accepted: name, description, systemPrompt, userPromptTemplate, model" },
+        { error: "No updatable fields provided. Accepted: name, description, systemPrompt, userPromptTemplate, model, isDefault" },
         { status: 400 }
       );
     }
@@ -164,6 +164,23 @@ export async function PUT(
         );
       }
       updates.model = typeof model === "string" ? model.trim() || "x-ai/grok-4.1-fast" : "x-ai/grok-4.1-fast";
+    }
+
+    if (isDefault !== undefined) {
+      if (typeof isDefault !== "boolean") {
+        return NextResponse.json(
+          { error: "isDefault must be a boolean" },
+          { status: 400 }
+        );
+      }
+      // If setting this template as default, unset all other defaults for the user
+      if (isDefault) {
+        await db
+          .update(templates)
+          .set({ isDefault: false, updatedAt: new Date().toISOString() })
+          .where(eq(templates.userId, userId));
+      }
+      updates.isDefault = isDefault;
     }
 
     const [updated] = await db
