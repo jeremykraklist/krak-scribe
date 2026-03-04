@@ -43,9 +43,16 @@ export async function POST(
       );
     }
 
-    if (transcript.status === "completed") {
+    if (transcript.status === "completed" || transcript.status === "processed") {
       return NextResponse.json(
         { error: "Already transcribed. Use GET to retrieve the transcript." },
+        { status: 409 }
+      );
+    }
+
+    if (transcript.status === "processing") {
+      return NextResponse.json(
+        { error: "Template processing in progress" },
         { status: 409 }
       );
     }

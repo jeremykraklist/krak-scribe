@@ -4,6 +4,7 @@ import { isAllowedFile, saveUploadedFile } from "@/lib/upload";
 import { db } from "@/lib/db";
 import { transcripts } from "@/lib/db/schema";
 import { v4 as uuidv4 } from "uuid";
+import { runAutoPipeline } from "@/lib/auto-pipeline";
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,6 +61,12 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
+    // Fire-and-forget: auto-transcribe + auto-process pipeline
+    // Don't await — let it run in the background so the upload response is fast
+    runAutoPipeline(transcript.id, userId).catch((err) => {
+      console.error(`[upload] Auto-pipeline background error for ${transcript.id}:`, err);
+    });
+
     return NextResponse.json(
       {
         transcript: {
@@ -70,7 +77,8 @@ export async function POST(request: NextRequest) {
           status: transcript.status,
           createdAt: transcript.createdAt,
         },
-        message: "File uploaded successfully. Use POST /api/transcribe/{id} to start transcription.",
+        message:
+          "File uploaded. Auto-transcription and processing started. Poll GET /api/transcribe/{id} for status.",
       },
       { status: 201 }
     );
