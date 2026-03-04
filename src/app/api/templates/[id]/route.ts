@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getUserIdFromRequest } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { templates } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 
 /**
  * GET /api/templates/[id] — Get a single template.
@@ -95,18 +95,18 @@ export async function PUT(
       );
     }
 
-    const { name, description, systemPrompt, userPromptTemplate, model } =
+    const { name, description, systemPrompt, userPromptTemplate, model, isDefault } =
       (body ?? {}) as Record<string, unknown>;
 
     // Build update payload — only include provided fields
     const updates: Record<string, unknown> = {};
 
     // Check if any updatable field was actually provided
-    const updatableKeys = ["name", "description", "systemPrompt", "userPromptTemplate", "model"];
+    const updatableKeys = ["name", "description", "systemPrompt", "userPromptTemplate", "model", "isDefault"];
     const hasUpdates = updatableKeys.some((k) => (body as Record<string, unknown>)[k] !== undefined);
     if (!hasUpdates) {
       return NextResponse.json(
-        { error: "No updatable fields provided. Accepted: name, description, systemPrompt, userPromptTemplate, model" },
+        { error: "No updatable fields provided. Accepted: name, description, systemPrompt, userPromptTemplate, model, isDefault" },
         { status: 400 }
       );
     }
@@ -164,6 +164,25 @@ export async function PUT(
         );
       }
       updates.model = typeof model === "string" ? model.trim() || "x-ai/grok-4.1-fast" : "x-ai/grok-4.1-fast";
+    }
+
+    if (isDefault !== undefined) {
+      if (typeof isDefault !== "boolean") {
+        return NextResponse.json(
+          { error: "isDefault must be a boolean" },
+          { status: 400 }
+        );
+      }
+
+      // Clear other defaults for this user before setting a new one
+      if (isDefault) {
+        await db
+          .update(templates)
+          .set({ isDefault: false, updatedAt: new Date().toISOString() })
+          .where(and(eq(templates.userId, userId), ne(templates.id, id)));
+      }
+
+      updates.isDefault = isDefault;
     }
 
     const [updated] = await db
