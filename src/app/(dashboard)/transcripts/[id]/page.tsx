@@ -317,16 +317,13 @@ export default function TranscriptDetailPage() {
                 <div className="space-y-3">
                   {transcript.segments.map((seg, i) => (
                     <div key={i} className="group">
-                      <div className="flex items-center gap-2 mb-1">
-                        {seg.speaker && (
+                      {seg.speaker && (
+                        <div className="mb-1">
                           <span className="text-accent text-xs font-medium">
                             {seg.speaker}
                           </span>
-                        )}
-                        <span className="text-muted text-xs">
-                          {formatTimestamp(seg.start)}
-                        </span>
-                      </div>
+                        </div>
+                      )}
                       <p className="text-sm leading-relaxed">{seg.text}</p>
                     </div>
                   ))}
