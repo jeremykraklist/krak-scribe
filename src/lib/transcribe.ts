@@ -127,7 +127,7 @@ export async function transcribeFile(
 
     await new Promise<void>((resolve, reject) => {
       // 2x realtime or 2 min min, capped at 30 min (setTimeout max is ~2^31 ms)
-      const timeoutMs = Math.min(Math.max(duration * 2000, 120000), 1_800_000);
+      const timeoutMs = Math.round(Math.min(Math.max(duration * 2000, 120000), 1_800_000));
       const proc = execCallback(whisperCmd, { timeout: timeoutMs }, (error) => {
         if (error) {
           reject(new Error(`whisper.cpp failed: ${error.message}`));
